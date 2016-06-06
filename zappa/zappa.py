@@ -24,29 +24,6 @@ logger = logging.getLogger(__name__)
 # Policies And Template Mappings
 ##
 
-TEMPLATE_MAPPING = """{
-  "body" : "$util.base64Encode($input.json("$"))",
-  "headers": {
-    #foreach($header in $input.params().header.keySet())
-    "$header": "$util.escapeJavaScript($input.params().header.get($header))" #if($foreach.hasNext),#end
-
-    #end
-  },
-  "method": "$context.httpMethod",
-  "params": {
-    #foreach($param in $input.params().path.keySet())
-    "$param": "$util.escapeJavaScript($input.params().path.get($param))" #if($foreach.hasNext),#end
-
-    #end
-  },
-  "query": {
-    #foreach($queryParam in $input.params().querystring.keySet())
-    "$queryParam": "$util.escapeJavaScript($input.params().querystring.get($queryParam))" #if($foreach.hasNext),#end
-
-    #end
-  }
-}"""
-
 POST_TEMPLATE_MAPPING = """#set($rawPostData = $input.path("$"))
 {
   "body" : "$util.base64Encode($input.body)",
@@ -170,7 +147,8 @@ REDIRECT_RESPONSE_TEMPLATE = ""
 API_GATEWAY_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ap-northeast-1']
 LAMBDA_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ap-northeast-1']
 
-ZIP_EXCLUDES =  ['*.exe', '*.DS_Store', '*.Python', '*.git', '.git/*', '*.zip', '*.tar.gz', '*.hg', '*.egg-info']
+ZIP_EXCLUDES = ['*.exe', '*.DS_Store', '*.Python', '*.git', '.git/*', '*.zip', '*.tar.gz', '*.hg', '*.egg-info']
+
 
 ##
 # Classes
@@ -242,7 +220,7 @@ class Zappa(object):
         if not venv:
             try:
                 venv = os.environ['VIRTUAL_ENV']
-            except KeyError as e: # pragma: no cover
+            except KeyError as e:  # pragma: no cover
                 print("Zappa requires an active virtual environment.")
                 quit()
 
@@ -265,13 +243,15 @@ class Zappa(object):
                 (path, tail) = os.path.split(path)
             parts.append(os.path.join(path, tail))
             return map(os.path.normpath, parts)[::-1]
+
         split_venv = splitpath(venv)
         split_cwd = splitpath(cwd)
 
         # Ideally this should be avoided automatically,
         # but this serves as an okay stop-gap measure.
         if split_venv[-1] == split_cwd[-1]:
-            print("Warning! Your project and virtualenv have the same name! You may want to re-create your venv with a new name, or explicitly define a 'project_name', as this may cause errors.")
+            print(
+                "Warning! Your project and virtualenv have the same name! You may want to re-create your venv with a new name, or explicitly define a 'project_name', as this may cause errors.")
 
         # First, do the project..
         temp_project_path = os.path.join(tempfile.gettempdir(), str(int(time.time())))
@@ -321,7 +301,7 @@ class Zappa(object):
         try:
             import zlib
             compression_method = zipfile.ZIP_DEFLATED
-        except ImportError as e: # pragma: no cover
+        except ImportError as e:  # pragma: no cover
             compression_method = zipfile.ZIP_STORED
 
         zipf = zipfile.ZipFile(zip_path, 'w', compression_method)
@@ -355,7 +335,7 @@ class Zappa(object):
 
         # Warn if this is too large for Lambda.
         file_stats = os.stat(zip_path)
-        if file_stats.st_size > 52428800: # pragma: no cover
+        if file_stats.st_size > 52428800:  # pragma: no cover
             print("\n\nWarning: Application zip package is likely to be too large for AWS Lambda.\n\n")
 
         return zip_fname
@@ -379,7 +359,7 @@ class Zappa(object):
         # it exists, since boto3 doesn't expose a better check.
         try:
             s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={"LocationConstraint": self.aws_region})
-        except botocore.exceptions.ClientError as e: # pragma: no cover
+        except botocore.exceptions.ClientError as e:  # pragma: no cover
             pass
 
         if not os.path.isfile(source_path) or os.stat(source_path).st_size == 0:
@@ -401,14 +381,14 @@ class Zappa(object):
                     source_path, bucket_name, dest_path,
                     Callback=progress.update
                 )
-            except Exception as e: # pragma: no cover
+            except Exception as e:  # pragma: no cover
                 s3 = self.boto_session.client('s3')
                 s3.upload_file(source_path, bucket_name, dest_path)
 
             progress.close()
-        except (KeyboardInterrupt, SystemExit): # pragma: no cover
+        except (KeyboardInterrupt, SystemExit):  # pragma: no cover
             raise
-        except Exception as e: # pragma: no cover
+        except Exception as e:  # pragma: no cover
             print(e)
             return False
         return True
@@ -427,7 +407,7 @@ class Zappa(object):
 
         try:
             s3.meta.client.head_bucket(Bucket=bucket_name)
-        except botocore.exceptions.ClientError as e: # pragma: no cover
+        except botocore.exceptions.ClientError as e:  # pragma: no cover
             # If a client error is thrown, then check that it was a 404 error.
             # If it was a 404 error, then the bucket does not exist.
             error_code = int(e.response['Error']['Code'])
@@ -440,11 +420,13 @@ class Zappa(object):
             return True
         else:
             return False
+
     ##
     # Lambda
     ##
 
-    def create_lambda_function(self, bucket, s3_key, function_name, handler, description="Zappa Deployment", timeout=30, memory_size=512, publish=True, vpc_config=None):
+    def create_lambda_function(self, bucket, s3_key, function_name, handler, description="Zappa Deployment", timeout=30,
+                               memory_size=512, publish=True, vpc_config=None):
         """
         Given a bucket and key of a valid Lambda-zip, a function name and a handler, register that Lambda function.
 
@@ -490,7 +472,8 @@ class Zappa(object):
 
         return response['FunctionArn']
 
-    def invoke_lambda_function(self, function_name, payload, invocation_type='Event', log_type='Tail', client_context=None, qualifier=None):
+    def invoke_lambda_function(self, function_name, payload, invocation_type='Event', log_type='Tail',
+                               client_context=None, qualifier=None):
         """
         Directly invoke a named Lambda function with a payload.
         Returns the response.
@@ -518,7 +501,7 @@ class Zappa(object):
 
         response = client.list_versions_by_function(FunctionName=function_name)
 
-        #Take into account $LATEST
+        # Take into account $LATEST
         if len(response['Versions']) < versions_back + 1:
             print("We do not have {} revisions. Aborting".format(str(versions_back)))
             return False
@@ -533,7 +516,8 @@ class Zappa(object):
             print("Failed to get version {} of {} code".format(versions_back, function_name))
             return False
 
-        response = client.update_function_code(FunctionName=function_name, ZipFile=response.content, Publish=publish) # pragma: no cover
+        response = client.update_function_code(FunctionName=function_name, ZipFile=response.content,
+                                               Publish=publish)  # pragma: no cover
 
         return response['FunctionArn']
 
@@ -556,7 +540,7 @@ class Zappa(object):
     # API Gateway
     ##
 
-    def create_api_gateway_routes(self, lambda_arn, api_name=None):
+    def create_api_gateway_routes(self, lambda_arn, api_name=None, mappings=None):
         """
         Creates the API Gateway for this Zappa deployment.
 
@@ -592,7 +576,7 @@ class Zappa(object):
 
         # count how many put requests we'll be reporting for progress bar
         progress_total = self.parameter_depth * len(self.http_methods) * (
-                             2 + len(self.integration_response_codes) + len(self.method_response_codes)) - 1
+            2 + len(self.integration_response_codes) + len(self.method_response_codes)) - 1
         progress = tqdm(total=progress_total)
 
         # AWS seems to create this by default,
@@ -603,11 +587,10 @@ class Zappa(object):
                 root_id = item['id']
         if not root_id:
             return False
-        self.create_and_setup_methods(api_id, root_id, lambda_arn, progress.update)
+        self.create_and_setup_methods(api_id, root_id, lambda_arn, mappings, progress.update)
 
         parent_id = root_id
         for i in range(1, self.parameter_depth):
-
             response = client.create_resource(
                 restApiId=api_id,
                 parentId=parent_id,
@@ -616,11 +599,11 @@ class Zappa(object):
             resource_id = response['id']
             parent_id = resource_id
 
-            self.create_and_setup_methods(api_id, resource_id, lambda_arn, progress.update) # pragma: no cover
+            self.create_and_setup_methods(api_id, resource_id, lambda_arn, progress.update)  # pragma: no cover
 
         return api_id
 
-    def create_and_setup_methods(self, api_id, resource_id, lambda_arn, report_progress):
+    def create_and_setup_methods(self, api_id, resource_id, lambda_arn, mappings, report_progress):
         """
         Sets up the methods, integration responses and method responses for a given API Gateway resource.
 
@@ -633,17 +616,19 @@ class Zappa(object):
         for method in self.http_methods:
 
             response = client.put_method(
-                    restApiId=api_id,
-                    resourceId=resource_id,
-                    httpMethod=method,
-                    authorizationType='none',
-                    apiKeyRequired=False
+                restApiId=api_id,
+                resourceId=resource_id,
+                httpMethod=method,
+                authorizationType='none',
+                apiKeyRequired=False
             )
             report_progress()
-
-            template_mapping = TEMPLATE_MAPPING
-            post_template_mapping = POST_TEMPLATE_MAPPING
-            form_encoded_template_mapping = FORM_ENCODED_TEMPLATE_MAPPING
+            if mappings:
+                post_template_mapping = mappings['POST_TEMPLATE_MAPPING']
+                form_encoded_template_mapping = mappings['FORM_ENCODED_TEMPLATE_MAPPING']
+            else:
+                post_template_mapping = POST_TEMPLATE_MAPPING
+                form_encoded_template_mapping = FORM_ENCODED_TEMPLATE_MAPPING
             content_mapping_templates = {
                 'application/json': post_template_mapping,
                 'application/x-www-form-urlencoded': post_template_mapping,
@@ -674,16 +659,17 @@ class Zappa(object):
             for response in self.method_response_codes:
                 status_code = str(response)
 
-                response_parameters = {"method.response.header." + header_type: False for header_type in self.method_header_types}
+                response_parameters = {"method.response.header." + header_type: False for header_type in
+                                       self.method_header_types}
                 response_models = {content_type: 'Empty' for content_type in self.method_content_types}
 
                 method_response = client.put_method_response(
-                        restApiId=api_id,
-                        resourceId=resource_id,
-                        httpMethod=method,
-                        statusCode=status_code,
-                        responseParameters=response_parameters,
-                        responseModels=response_models
+                    restApiId=api_id,
+                    resourceId=resource_id,
+                    httpMethod=method,
+                    statusCode=status_code,
+                    responseParameters=response_parameters,
+                    responseModels=response_models
                 )
                 report_progress()
 
@@ -694,27 +680,33 @@ class Zappa(object):
             for response in self.integration_response_codes:
                 status_code = str(response)
 
-                response_parameters = {"method.response.header." + header_type: "integration.response.body." + header_type for header_type in self.method_header_types}
+                response_parameters = {
+                    "method.response.header." + header_type: "integration.response.body." + header_type for header_type
+                    in
+                    self.method_header_types}
 
                 # Error code matching RegEx
                 # Thanks to @KevinHornschemeier and @jayway
                 # for the discussion on this.
                 if status_code == '200':
-                    response_templates = {content_type: RESPONSE_TEMPLATE for content_type in self.integration_content_types}
+                    response_templates = {content_type: RESPONSE_TEMPLATE for content_type in
+                                          self.integration_content_types}
                 elif status_code in ['301', '302']:
-                    response_templates = {content_type: REDIRECT_RESPONSE_TEMPLATE for content_type in self.integration_content_types}
+                    response_templates = {content_type: REDIRECT_RESPONSE_TEMPLATE for content_type in
+                                          self.integration_content_types}
                     response_parameters["method.response.header.Location"] = "integration.response.body.errorMessage"
                 else:
-                    response_templates = {content_type: ERROR_RESPONSE_TEMPLATE for content_type in self.integration_content_types}
+                    response_templates = {content_type: ERROR_RESPONSE_TEMPLATE for content_type in
+                                          self.integration_content_types}
 
                 integration_response = client.put_integration_response(
-                        restApiId=api_id,
-                        resourceId=resource_id,
-                        httpMethod=method,
-                        statusCode=status_code,
-                        selectionPattern=self.selection_pattern(status_code),
-                        responseParameters=response_parameters,
-                        responseTemplates=response_templates
+                    restApiId=api_id,
+                    resourceId=resource_id,
+                    httpMethod=method,
+                    statusCode=status_code,
+                    selectionPattern=self.selection_pattern(status_code),
+                    responseParameters=response_parameters,
+                    responseTemplates=response_templates
                 )
                 report_progress()
 
@@ -736,7 +728,8 @@ class Zappa(object):
 
         return pattern
 
-    def deploy_api_gateway(self, api_id, stage_name, stage_description="", description="", cache_cluster_enabled=False, cache_cluster_size='0.5', variables=None):
+    def deploy_api_gateway(self, api_id, stage_name, stage_description="", description="", cache_cluster_enabled=False,
+                           cache_cluster_size='0.5', variables=None):
         """
         Deploy the API Gateway!
 
@@ -797,7 +790,8 @@ class Zappa(object):
 
         for item in response['items']:
             if item['description'] == stage_name:
-                endpoint_url = "https://" + item['id'] + ".execute-api." + self.boto_session.region_name + ".amazonaws.com/" + stage_name
+                endpoint_url = "https://" + item[
+                    'id'] + ".execute-api." + self.boto_session.region_name + ".amazonaws.com/" + stage_name
                 return endpoint_url
 
         return ''
@@ -806,14 +800,18 @@ class Zappa(object):
     # IAM
     ##
 
-    def create_iam_roles(self):
+    def create_iam_roles(self, policies=None):
         """
         Creates and defines the IAM roles and policies necessary for Zappa.
 
         If the IAM role already exists, it will be updated if necessary.
         """
-        assume_policy_s = ASSUME_POLICY
-        attach_policy_s = ATTACH_POLICY
+        if policies:
+            assume_policy_s = policies['ASSUME_POLICY']
+            attach_policy_s = policies['ATTACH_POLICY']
+        else:
+            assume_policy_s = ASSUME_POLICY
+            attach_policy_s = ATTACH_POLICY
 
         attach_policy_obj = json.loads(attach_policy_s)
         assume_policy_obj = json.loads(assume_policy_s)
@@ -844,7 +842,8 @@ class Zappa(object):
             policy.put(PolicyDocument=attach_policy_s)
 
         if role.assume_role_policy_document != assume_policy_obj and \
-                set(role.assume_role_policy_document['Statement'][0]['Principal']['Service']) != set(assume_policy_obj['Statement'][0]['Principal']['Service']):
+                        set(role.assume_role_policy_document['Statement'][0]['Principal']['Service']) != set(
+                    assume_policy_obj['Statement'][0]['Principal']['Service']):
             print("Updating assume role policy on " + self.role_name + " IAM Role.")
             client = self.boto_session.client('iam')
             client.update_assume_role_policy(
@@ -964,8 +963,7 @@ class Zappa(object):
         )['Rules']
         for rule in rules:
             if rule['Name'] == rule_name:
-
-               response = client.delete_rule(
+                response = client.delete_rule(
                     Name=rule_name
                 )
 
@@ -1027,7 +1025,7 @@ class Zappa(object):
             Rule=rule_name,
             Targets=[
                 {
-                    'Id': str(sum([ ord(c) for c in lambda_arn])), # Is this insane?
+                    'Id': str(sum([ord(c) for c in lambda_arn])),  # Is this insane?
                     'Arn': target_arn,
                     'Input': '',
                 },
@@ -1048,7 +1046,6 @@ class Zappa(object):
 
         self.delete_rule(rule_name)
 
-
     ##
     # CloudWatch Logging
     ##
@@ -1063,15 +1060,15 @@ class Zappa(object):
 
         log_name = '/aws/lambda/' + lambda_name
         streams = client.describe_log_streams(logGroupName=log_name,
-                                            descending=True,
-                                            orderBy='LastEventTime')
+                                              descending=True,
+                                              orderBy='LastEventTime')
 
         all_streams = streams['logStreams']
         all_names = [stream['logStreamName'] for stream in all_streams]
         response = client.filter_log_events(logGroupName=log_name,
-                            logStreamNames=all_names,
-                            filterPattern=filter_pattern,
-                            limit=limit)
+                                            logStreamNames=all_names,
+                                            filterPattern=filter_pattern,
+                                            limit=limit)
 
         return response['events']
 
