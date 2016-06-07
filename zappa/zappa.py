@@ -599,7 +599,7 @@ class Zappa(object):
             resource_id = response['id']
             parent_id = resource_id
 
-            self.create_and_setup_methods(api_id, resource_id, lambda_arn, progress.update)  # pragma: no cover
+            self.create_and_setup_methods(api_id, resource_id, lambda_arn, mappings, progress.update)  # pragma: no cover
 
         return api_id
 
