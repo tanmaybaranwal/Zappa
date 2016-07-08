@@ -563,8 +563,9 @@ class Zappa(object):
                 description=api_name + " Zappa",
                 cloneFrom=''
             )
-
-        api_id = response['id']
+            api_id = response['id']
+        else:
+            api_id = apis[0]['id']
 
         ##
         # The Resources
@@ -661,11 +662,10 @@ class Zappa(object):
 
                 response_parameters = {"method.response.header." + header_type: False for header_type in
                                        self.method_header_types}
-                response_parameters["method.response.header.Access-Control-Allow-Origin"] = "'*'"
+                response_parameters["method.response.header.Access-Control-Allow-Origin"] = True
                 if method == 'OPTIONS':
-                    response_parameters["method.response.header.Access-Control-Allow-Headers"] = \
-                        "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,Cache-Control'"
-                    response_parameters["method.response.header.Access-Control-Allow-Methods"] = "'*'"
+                    response_parameters["method.response.header.Access-Control-Allow-Headers"] = True
+                    response_parameters["method.response.header.Access-Control-Allow-Methods"] = True
 
                 response_models = {content_type: 'Empty' for content_type in self.method_content_types}
 
