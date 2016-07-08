@@ -661,6 +661,12 @@ class Zappa(object):
 
                 response_parameters = {"method.response.header." + header_type: False for header_type in
                                        self.method_header_types}
+                response_parameters["method.response.header.Access-Control-Allow-Origin"] = "'*'"
+                if method == 'OPTIONS':
+                    response_parameters["method.response.header.Access-Control-Allow-Headers"] = \
+                        "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,Cache-Control'"
+                    response_parameters["method.response.header.Access-Control-Allow-Methods"] = "'*'"
+
                 response_models = {content_type: 'Empty' for content_type in self.method_content_types}
 
                 method_response = client.put_method_response(
@@ -685,6 +691,11 @@ class Zappa(object):
                     in
                     self.method_header_types}
 
+                response_parameters["method.response.header.Access-Control-Allow-Origin"] = "'*'"
+                if method == 'OPTIONS':
+                    response_parameters["method.response.header.Access-Control-Allow-Headers"] = \
+                        "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,Cache-Control'"
+                    response_parameters["method.response.header.Access-Control-Allow-Methods"] = "'*'"
                 # Error code matching RegEx
                 # Thanks to @KevinHornschemeier and @jayway
                 # for the discussion on this.
