@@ -124,6 +124,6 @@ def common_log(environ, response, response_time=None):
         log_entry = formatter(response.status_code, environ,
                               len(response.content))
 
-    logger.info(log_entry)
+    print(log_entry)
 
     return log_entry
