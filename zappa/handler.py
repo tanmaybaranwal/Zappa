@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 import traceback
-import zipfile
+import tarfile
 
 from builtins import str
 from werkzeug.wrappers import Response
@@ -32,25 +32,6 @@ except ImportError as e:  # pragma: no cover
 logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-
-class WSGIException(Exception):
-    """
-    This exception is used by the handler to indicate that underlying WSGI app has returned a non-2xx(3xx) code.
-    """
-
-    pass
-
-
-class UncaughtWSGIException(Exception):
-    """
-    Indicates a problem that happened outside of WSGI app context (and thus wasn't handled by the WSGI app itself)
-    while processing a request from API Gateway.
-    """
-
-    def __init__(self, message, original=None):
-        super(UncaughtWSGIException, self).__init__(message)
-        self.original = original
 
 
 class LambdaHandler(object):
@@ -110,15 +91,15 @@ class LambdaHandler(object):
                 pass
 
             # Set any locally defined env vars
-            # Environement variable keys can't be Unicode
+            # Environment variable keys can't be Unicode
             # https://github.com/Miserlou/Zappa/issues/604
             for key in self.settings.ENVIRONMENT_VARIABLES.keys():
                 os.environ[str(key)] = self.settings.ENVIRONMENT_VARIABLES[key]
 
             # Pulling from S3 if given a zip path
-            project_zip_path = getattr(self.settings, 'ZIP_PATH', None)
-            if project_zip_path:
-                self.load_remote_project_zip(project_zip_path)
+            project_archive_path = getattr(self.settings, 'ARCHIVE_PATH', None)
+            if project_archive_path:
+                self.load_remote_project_archive(project_archive_path)
 
 
             # Load compliled library to the PythonPath
@@ -154,7 +135,7 @@ class LambdaHandler(object):
             else:
 
                 try:  # Support both for tests
-                    from zappa.ext.django import get_django_wsgi
+                    from zappa.ext.django_zappa import get_django_wsgi
                 except ImportError:  # pragma: no cover
                     from django_zappa_app import get_django_wsgi
 
@@ -164,7 +145,7 @@ class LambdaHandler(object):
 
             self.wsgi_app = ZappaWSGIMiddleware(wsgi_app_function)
 
-    def load_remote_project_zip(self, project_zip_path):
+    def load_remote_project_archive(self, project_zip_path):
         """
         Puts the project files from S3 in /tmp and adds to path
         """
@@ -176,16 +157,13 @@ class LambdaHandler(object):
             else:
                 boto_session = self.session
 
-            # Download the zip
-            remote_bucket, remote_file = project_zip_path.lstrip('s3://').split('/', 1)
+            # Download zip file from S3
+            remote_bucket, remote_file = parse_s3_url(project_zip_path)
             s3 = boto_session.resource('s3')
+            archive_on_s3 = s3.Object(remote_bucket, remote_file).get()
 
-            zip_path = '/tmp/{0!s}'.format(remote_file)
-            s3.Object(remote_bucket, remote_file).download_file(zip_path)
-
-            # Unzip contents to project folder
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                z.extractall(path=project_folder)
+            with tarfile.open(fileobj=archive_on_s3['Body'], mode="r|gz") as t:
+                t.extractall(project_folder)
 
         # Add to project path
         sys.path.insert(0, project_folder)
@@ -235,7 +213,7 @@ class LambdaHandler(object):
                     key,
                     value
                 ))
-            # Environement variable keys can't be Unicode
+            # Environment variable keys can't be Unicode
             # https://github.com/Miserlou/Zappa/issues/604
             try:
                 os.environ[str(key)] = value
@@ -260,17 +238,6 @@ class LambdaHandler(object):
         exception_handler = handler.settings.EXCEPTION_HANDLER
         try:
             return handler.handler(event, context)
-        except WSGIException as wsgi_ex:
-            # do nothing about LambdaExceptions since those are already handled (or should be handled by the WSGI app).
-            raise wsgi_ex
-        except UncaughtWSGIException as u_wsgi_ex:
-            # hand over original error to exception handler, since the exception happened outside of WSGI app context
-            # (it wasn't propertly processed by the app itself)
-            cls._process_exception(exception_handler=exception_handler,
-                                   event=event, context=context, exception=u_wsgi_ex.original)
-            # raise unconditionally since it's an API gateway error (i.e. client expects to see a 500 and execution
-            # won't be retried).
-            raise u_wsgi_ex
         except Exception as ex:
             exception_processed = cls._process_exception(exception_handler=exception_handler,
                                                          event=event, context=context, exception=ex)
@@ -321,6 +288,12 @@ class LambdaHandler(object):
 
         arn = None
         if 'Sns' in record:
+            try:
+                message = json.loads(record['Sns']['Message'])
+                if message.get('command'):
+                    return message['command']
+            except ValueError:
+                pass
             arn = record['Sns'].get('TopicArn')
         elif 'dynamodb' in record or 'kinesis' in record:
             arn = record.get('eventSourceARN')
@@ -329,6 +302,13 @@ class LambdaHandler(object):
             return self.settings.AWS_EVENT_MAPPING.get(arn)
 
         return None
+
+    def get_function_for_cognito_trigger(self, trigger):
+        """
+        Get the associated function to execute for a cognito trigger
+        """
+        print("get_function_for_cognito_trigger", self.settings.COGNITO_TRIGGER_MAPPING, trigger, self.settings.COGNITO_TRIGGER_MAPPING.get(trigger))
+        return self.settings.COGNITO_TRIGGER_MAPPING.get(trigger)
 
     def handler(self, event, context):
         """
@@ -342,6 +322,12 @@ class LambdaHandler(object):
         # If in DEBUG mode, log all raw incoming events.
         if settings.DEBUG:
             logger.debug('Zappa Event: {}'.format(event))
+
+        # Set any API Gateway defined Stage Variables
+        # as env vars
+        if event.get('stageVariables'):
+            for key in event['stageVariables'].keys():
+                os.environ[str(key)] = event['stageVariables'][key]
 
         # This is the result of a keep alive, recertify
         # or scheduled event.
@@ -370,7 +356,7 @@ class LambdaHandler(object):
 
         # This is a direct, raw python invocation.
         # It's _extremely_ important we don't allow this event source
-        # to be overriden by unsanitized, non-admin user input.
+        # to be overridden by unsanitized, non-admin user input.
         elif event.get('raw_command', None):
 
             raw_command = event['raw_command']
@@ -422,6 +408,19 @@ class LambdaHandler(object):
                 logger.error("Cannot find a function to process the authorization request.")
                 raise Exception('Unauthorized')
 
+        # This is an AWS Cognito Trigger Event
+        elif event.get('triggerSource', None):
+            triggerSource = event.get('triggerSource')
+            whole_function = self.get_function_for_cognito_trigger(triggerSource)
+            result = event
+            if whole_function:
+                app_function = self.import_module_and_get_function(whole_function)
+                result = self.run_function(app_function, event, context)
+                logger.debug(result)
+            else:
+                logger.error("Cannot find a function to handle cognito trigger {}".format(triggerSource))
+            return result
+
         # Normal web app flow
         try:
             # Timing
@@ -430,22 +429,38 @@ class LambdaHandler(object):
             # This is a normal HTTP request
             if event.get('httpMethod', None):
 
-                if settings.DOMAIN:
-                    # If we're on a domain, we operate normally
-                    script_name = ''
+                script_name = ''
+                headers = event.get('headers')
+                if headers:
+                    host = headers.get('Host')
                 else:
-                    # But if we're not, then our base URL
-                    # will be something like
-                    # https://blahblahblah.execute-api.us-east-1.amazonaws.com/dev
-                    # So, we need to make sure the WSGI app knows this.
-                    script_name = '/' + settings.API_STAGE
+                    host = None
+
+                if host:
+                    if 'amazonaws.com' in host:
+                        # The path provided in th event doesn't include the
+                        # stage, so we must tell Flask to include the API
+                        # stage in the url it calculates. See https://github.com/Miserlou/Zappa/issues/1014
+                        script_name = '/' + settings.API_STAGE
+                else:
+                    # This is a test request sent from the AWS console
+                    if settings.DOMAIN:
+                        # Assume the requests received will be on the specified
+                        # domain. No special handling is required
+                        pass
+                    else:
+                        # Assume the requests received will be to the
+                        # amazonaws.com endpoint, so tell Flask to include the
+                        # API stage
+                        script_name = '/' + settings.API_STAGE
 
                 # Create the environment for WSGI and handle the request
                 environ = create_wsgi_request(
                     event,
                     script_name=script_name,
                     trailing_slash=self.trailing_slash,
-                    binary_support=settings.BINARY_SUPPORT
+                    binary_support=settings.BINARY_SUPPORT,
+                    context_header_mappings=settings.CONTEXT_HEADER_MAPPINGS
                 )
 
                 # We are always on https on Lambda, so tell our wsgi app that.
@@ -469,7 +484,7 @@ class LambdaHandler(object):
                         else:
                             zappa_returndict['body'] = response.data
                     else:
-                        zappa_returndict['body'] = response.data
+                        zappa_returndict['body'] = response.get_data(as_text=True)
 
                 zappa_returndict['statusCode'] = response.status_code
                 zappa_returndict['headers'] = {}

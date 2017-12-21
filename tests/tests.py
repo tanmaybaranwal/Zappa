@@ -1,44 +1,35 @@
 # -*- coding: utf8 -*-
-import base64
 import collections
 import json
 
-from io import BytesIO, StringIO
+from io import BytesIO
 import flask
 import mock
 import os
 import random
 import string
 import zipfile
-import re
 import unittest
 import shutil
 import sys
 import tempfile
 
-if sys.version_info[0] < 3:
-    from contextlib import nested
-    from cStringIO import StringIO as OldStringIO
-
-from builtins import bytes
-from past.builtins import basestring
-
+from click.globals import resolve_color_default
 from click.exceptions import ClickException
-from lambda_packages import lambda_packages
 
-from .utils import placebo_session, patch_open
-
-from zappa.cli import ZappaCLI, shamelessly_promote
+from zappa.cli import ZappaCLI, shamelessly_promote, disable_click_colors
 from zappa.ext.django_zappa import get_django_wsgi
-from zappa.handler import LambdaHandler, lambda_handler
-from zappa.letsencrypt import get_cert_and_update_domain, create_domain_key, create_domain_csr, create_chained_certificate, get_cert, cleanup, parse_account_key, parse_csr, sign_certificate, encode_certificate, register_account, verify_challenge
-from zappa.utilities import (detect_django_settings, copytree, detect_flask_apps,
-                        add_event_source, remove_event_source,
-                        get_event_source_status, parse_s3_url, human_size, string_to_timestamp,
-                        validate_name, InvalidAwsLambdaName, contains_python_files_or_subdirs,
-                        get_venv_from_python_version)
+from zappa.letsencrypt import get_cert_and_update_domain, create_domain_key, create_domain_csr, \
+    create_chained_certificate, cleanup, parse_account_key, parse_csr, sign_certificate, encode_certificate,\
+    register_account, verify_challenge
+from zappa.utilities import (detect_django_settings, detect_flask_apps,  parse_s3_url, human_size, string_to_timestamp,
+                             validate_name, InvalidAwsLambdaName, contains_python_files_or_subdirs,
+                             conflicts_with_a_neighbouring_module)
 from zappa.wsgi import create_wsgi_request, common_log
 from zappa.core import Zappa, ASSUME_POLICY, ATTACH_POLICY
+
+if sys.version_info[0] < 3:
+    from cStringIO import StringIO as OldStringIO
 
 def random_string(length):
     return ''.join(random.choice(string.printable) for _ in range(length))
@@ -75,6 +66,10 @@ class TestZappa(unittest.TestCase):
     def test_zappa(self):
         self.assertTrue(True)
         Zappa()
+
+    def test_disable_click_colors(self):
+        disable_click_colors()
+        assert resolve_color_default() is False
 
     # @mock.patch('zappa.zappa.find_packages')
     # @mock.patch('os.remove')
@@ -113,45 +108,79 @@ class TestZappa(unittest.TestCase):
     #             self.assertEqual(mock_remove.call_count, 1)
 
     def test_create_lambda_package(self):
-        # mock the pip.get_installed_distributions() to include a package in lambda_packages so that the code
+        # mock the pip.get_installed_distributions() to include a known package in lambda_packages so that the code
         # for zipping pre-compiled packages gets called
-        mock_named_tuple = collections.namedtuple('mock_named_tuple', ['project_name', 'location'])
-        mock_return_val = [mock_named_tuple(list(lambda_packages.keys())[0], '/path')]  # choose name of 1st package in lambda_packages
-        with mock.patch('pip.get_installed_distributions', return_value=mock_return_val):
-            z = Zappa()
+        mock_installed_packages = {'psycopg2': '2.6.1'}
+        with mock.patch('zappa.core.Zappa.get_installed_packages', return_value=mock_installed_packages):
+            z = Zappa(runtime='python2.7')
             path = z.create_lambda_zip(handler_file=os.path.realpath(__file__))
             self.assertTrue(os.path.isfile(path))
             os.remove(path)
 
     def test_get_manylinux_python27(self):
         z = Zappa(runtime='python2.7')
-        self.assertNotEqual(z.get_manylinux_wheel('pandas'), None)
-        self.assertEqual(z.get_manylinux_wheel('derpderpderpderp'), None)
+        self.assertIsNotNone(z.get_cached_manylinux_wheel('cffi', '1.10.0'))
+        self.assertIsNone(z.get_cached_manylinux_wheel('derpderpderpderp', '0.0'))
 
-        # mock the pip.get_installed_distributions() to include a package in manylinux so that the code
-        # for zipping pre-compiled packages gets called
-        mock_named_tuple = collections.namedtuple('mock_named_tuple', ['project_name', 'location'])
-        mock_return_val = [mock_named_tuple('pandas', '/path')]
-        with mock.patch('pip.get_installed_distributions', return_value=mock_return_val):
-            z = Zappa()
+        # mock with a known manylinux wheel package so that code for downloading them gets invoked
+        mock_installed_packages = { 'cffi' : '1.10.0' }
+        with mock.patch('zappa.core.Zappa.get_installed_packages', return_value = mock_installed_packages):
+            z = Zappa(runtime='python2.7')
             path = z.create_lambda_zip(handler_file=os.path.realpath(__file__))
             self.assertTrue(os.path.isfile(path))
             os.remove(path)
 
     def test_get_manylinux_python36(self):
         z = Zappa(runtime='python3.6')
-        self.assertNotEqual(z.get_manylinux_wheel('psycopg2'), None)
-        self.assertEqual(z.get_manylinux_wheel('derpderpderpderp'), None)
+        self.assertIsNotNone(z.get_cached_manylinux_wheel('psycopg2', '2.7.1'))
+        self.assertIsNone(z.get_cached_manylinux_wheel('derpderpderpderp', '0.0'))
 
-        # mock the pip.get_installed_distributions() to include a package in manylinux so that the code
-        # for zipping pre-compiled packages gets called
-        mock_named_tuple = collections.namedtuple('mock_named_tuple', ['project_name', 'location'])
-        mock_return_val = [mock_named_tuple('psycopg2', '/path')]
-        with mock.patch('pip.get_installed_distributions', return_value=mock_return_val):
-            z = Zappa()
+        # mock with a known manylinux wheel package so that code for downloading them gets invoked
+        mock_installed_packages = {'psycopg2': '2.7.1'}
+        with mock.patch('zappa.core.Zappa.get_installed_packages', return_value=mock_installed_packages):
+            z = Zappa(runtime='python3.6')
             path = z.create_lambda_zip(handler_file=os.path.realpath(__file__))
             self.assertTrue(os.path.isfile(path))
             os.remove(path)
+
+    def test_should_use_lambda_packages(self):
+        z = Zappa(runtime='python2.7')
+
+        self.assertTrue(z.have_correct_lambda_package_version('psycopg2', '2.6.1'))
+        self.assertFalse(z.have_correct_lambda_package_version('psycopg2', '2.7.1'))
+        #testing case-insensitivity with lambda_package MySQL-Python
+        self.assertTrue(z.have_correct_lambda_package_version('mysql-python', '1.2.5'))
+        self.assertFalse(z.have_correct_lambda_package_version('mysql-python', '6.6.6'))
+
+        self.assertTrue(z.have_any_lambda_package_version('psycopg2'))
+        self.assertTrue(z.have_any_lambda_package_version('mysql-python'))
+        self.assertFalse(z.have_any_lambda_package_version('no_package'))
+
+    def test_getting_installed_packages(self, *args):
+        z = Zappa(runtime='python2.7')
+
+        # mock pip packages call to be same as what our mocked site packages dir has
+        mock_package = collections.namedtuple('mock_package', ['project_name', 'version', 'location'])
+        mock_pip_installed_packages = [mock_package('super_package', '0.1', '/venv/site-packages')]
+
+        with mock.patch('os.path.isdir', return_value=True):
+            with mock.patch('os.listdir', return_value=['super_package']):
+                import pip  # this gets called in non-test Zappa mode
+                with mock.patch('pip.get_installed_distributions', return_value=mock_pip_installed_packages):
+                    self.assertDictEqual(z.get_installed_packages('',''), {'super_package' : '0.1'})
+
+    def test_getting_installed_packages_mixed_case(self, *args):
+        z = Zappa(runtime='python2.7')
+
+        # mock pip packages call to be same as what our mocked site packages dir has
+        mock_package = collections.namedtuple('mock_package', ['project_name', 'version', 'location'])
+        mock_pip_installed_packages = [mock_package('SuperPackage', '0.1', '/venv/site-packages')]
+
+        with mock.patch('os.path.isdir', return_value=True):
+            with mock.patch('os.listdir', return_value=['superpackage']):
+                import pip  # this gets called in non-test Zappa mode
+                with mock.patch('pip.get_installed_distributions', return_value=mock_pip_installed_packages):
+                    self.assertDictEqual(z.get_installed_packages('',''), {'superpackage' : '0.1'})
 
     def test_load_credentials(self):
         z = Zappa()
@@ -285,6 +314,39 @@ class TestZappa(unittest.TestCase):
         z = Zappa()
         path = os.getcwd()
       # z.schedule_events # TODO
+
+
+    def test_update_aws_env_vars(self):
+        z = Zappa()
+        z.credentials_arn = object()
+
+        with mock.patch.object(z, "lambda_client") as mock_client:
+            # Simulate already having some AWS env vars remotely
+            mock_client.get_function_configuration.return_value = {"Environment": {"Variables": {"REMOTE_ONLY": "AAA", "CHANGED_REMOTE" : "BBB"}}}
+            z.update_lambda_configuration("test", "test", "test", aws_environment_variables={"CHANGED_REMOTE" : "ZZ", "LOCAL_ONLY" : "YY"})
+            end_result_should_be = {"REMOTE_ONLY": "AAA", "CHANGED_REMOTE" : "ZZ", "LOCAL_ONLY" : "YY"}
+            self.assertEqual(mock_client.update_function_configuration.call_args[1]["Environment"], { "Variables": end_result_should_be})
+
+        with mock.patch.object(z, "lambda_client") as mock_client:
+            # Simulate already having some AWS env vars remotely but none set in aws_environment_variables
+            mock_client.get_function_configuration.return_value = {
+                "Environment": {"Variables": {"REMOTE_ONLY_1": "AAA", "REMOTE_ONLY_2": "BBB"}}}
+            z.update_lambda_configuration("test", "test", "test")
+            end_result_should_be = {"REMOTE_ONLY_1": "AAA", "REMOTE_ONLY_2": "BBB"}
+            self.assertEqual(mock_client.update_function_configuration.call_args[1]["Environment"],
+                             {"Variables": end_result_should_be})
+
+    def test_update_empty_aws_env_hash(self):
+        z = Zappa()
+        z.credentials_arn = object()
+
+        with mock.patch.object(z, "lambda_client") as mock_client:
+            # Simulate having no AWS env vars remotely
+            mock_client.get_function_configuration.return_value = {}
+            z.update_lambda_configuration("test", "test", "test", aws_environment_variables={"LOCAL_ONLY" : "LZ", "SHOW_AND_TELL" : "SHA"})
+            end_result_should_be = {"LOCAL_ONLY" : "LZ", "SHOW_AND_TELL" : "SHA"}
+            self.assertEqual(mock_client.update_function_configuration.call_args[1]["Environment"], { "Variables": end_result_should_be})
+
 
     ##
     # Logging
@@ -467,6 +529,21 @@ class TestZappa(unittest.TestCase):
         request = create_wsgi_request(event, trailing_slash=True)
         self.assertEqual("/path:1", request['PATH_INFO'])
 
+    def test_wsgi_latin1(self):
+        event = {
+            "body": {},
+            "headers": {},
+            "pathParameters": {},
+            "path": '/path/%E4%BB%8A%E6%97%A5%E3%81%AF',
+            "httpMethod": "GET",
+            "queryStringParameters": {"a": "%E4%BB%8A%E6%97%A5%E3%81%AF"},
+            "requestContext": {}
+        }
+        request = create_wsgi_request(event, script_name="%E4%BB%8A%E6%97%A5%E3%81%AF")
+        # verify that the path, query params and script name can be encoded in iso-8859-1
+        request['PATH_INFO'].encode('iso-8859-1')
+        request['QUERY_STRING'].encode('iso-8859-1')
+        request['SCRIPT_NAME'].encode('iso-8859-1')
 
     def test_wsgi_logging(self):
         # event = {
@@ -656,7 +733,7 @@ class TestZappa(unittest.TestCase):
         self.assertTrue(zappa_cli.stage_config['touch'])  # First Extension
         self.assertTrue(zappa_cli.stage_config['delete_local_zip'])  # The base
 
-    def test_load_settings_yaml(self):
+    def test_load_settings_yml(self):
         zappa_cli = ZappaCLI()
         zappa_cli.api_stage = 'ttt888'
         zappa_cli.load_settings('tests/test_settings.yml')
@@ -665,6 +742,18 @@ class TestZappa(unittest.TestCase):
         zappa_cli = ZappaCLI()
         zappa_cli.api_stage = 'extendo'
         zappa_cli.load_settings('tests/test_settings.yml')
+        self.assertEqual('lmbda', zappa_cli.stage_config['s3_bucket'])
+        self.assertEqual(True, zappa_cli.stage_config['touch'])
+
+    def test_load_settings_yaml(self):
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'ttt888'
+        zappa_cli.load_settings('tests/test_settings.yaml')
+        self.assertEqual(False, zappa_cli.stage_config['touch'])
+
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'extendo'
+        zappa_cli.load_settings('tests/test_settings.yaml')
         self.assertEqual('lmbda', zappa_cli.stage_config['s3_bucket'])
         self.assertEqual(True, zappa_cli.stage_config['touch'])
 
@@ -681,6 +770,7 @@ class TestZappa(unittest.TestCase):
         tempdir = tempfile.mkdtemp(prefix="zappa-test-settings")
         shutil.copy("tests/test_one_env.json", tempdir + "/zappa_settings.json")
         shutil.copy("tests/test_settings.yml", tempdir + "/zappa_settings.yml")
+        shutil.copy("tests/test_settings.yml", tempdir + "/zappa_settings.yaml")
         shutil.copy("tests/test_settings.toml", tempdir + "/zappa_settings.toml")
 
         orig_cwd = os.getcwd()
@@ -710,6 +800,13 @@ class TestZappa(unittest.TestCase):
             self.assertIn("ttt888", zappa_cli.zappa_settings)
             self.assertIn("devor", zappa_cli.zappa_settings)
             os.unlink("zappa_settings.yml")
+
+            self.assertEqual(zappa_cli.get_json_or_yaml_settings(),
+                             "zappa_settings.yaml")
+            zappa_cli.load_settings_file()
+            self.assertIn("ttt888", zappa_cli.zappa_settings)
+            self.assertIn("devor", zappa_cli.zappa_settings)
+            os.unlink("zappa_settings.yaml")
 
             # Without anything, we should get an exception.
             self.assertRaises(
@@ -763,7 +860,43 @@ class TestZappa(unittest.TestCase):
         zappa_cli.print_logs(logs, colorize=True, non_http=False)
         zappa_cli.print_logs(logs, colorize=True, non_http=True, http=True)
         zappa_cli.print_logs(logs, colorize=True, non_http=False, http=False)
+        zappa_cli.print_logs(logs, colorize=False, force_colorize=False)
+        zappa_cli.print_logs(logs, colorize=False, force_colorize=True)
+        zappa_cli.print_logs(logs, colorize=True, force_colorize=False)
+        zappa_cli.print_logs(logs, colorize=True, non_http=False, http=False, force_colorize=True)
         zappa_cli.check_for_update()
+
+    def test_cli_format_invoke_command(self):
+        zappa_cli = ZappaCLI()
+        plain_string = "START RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f Version: $LATEST\n[DEBUG]\t2017-06-15T23:39:27.638Z\tdef8808e-5223-11e7-b3b7-4919f6e7dd4f\tZappa Event: {'raw_command': 'import datetime; print(datetime.datetime.now())'}\n2017-06-15 23:39:27.638296\nEND RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f\nREPORT RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f\tDuration: 0.59 ms\tBilled Duration: 100 ms \tMemory Size: 512 MB\tMax Memory Used: 53 MB\t\n"
+        final_string = "START RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f Version: $LATEST\n[DEBUG] 2017-06-15T23:39:27.638Z def8808e-5223-11e7-b3b7-4919f6e7dd4f Zappa Event: {'raw_command': 'import datetime; print(datetime.datetime.now())'}\n2017-06-15 23:39:27.638296\nEND RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f\nREPORT RequestId: def8808e-5223-11e7-b3b7-4919f6e7dd4f\nDuration: 0.59 ms\nBilled Duration: 100 ms \nMemory Size: 512 MB\nMax Memory Used: 53 MB\n"
+
+        formated_string = zappa_cli.format_invoke_command(plain_string)
+        self.assertEqual(final_string, formated_string)
+
+    def test_cli_colorize_invoke_command(self):
+        zappa_cli = ZappaCLI()
+        plain_string = "START RequestId: dd81d3de-5225-11e7-a24f-59014f430ab3 Version: $LATEST\n[DEBUG] 2017-06-15T23:53:44.194Z dd81d3de-5225-11e7-a24f-59014f430ab3 Zappa Event: {'raw_command': 'import datetime; print(datetime.datetime.now())'}\n2017-06-15 23:53:44.195012\nEND RequestId: dd81d3de-5225-11e7-a24f-59014f430ab3\nREPORT RequestId: dd81d3de-5225-11e7-a24f-59014f430ab3\nDuration: 0.63 ms\nBilled Duration: 100 ms \nMemory Size: 512 MB\nMax Memory Used: 53 MB\n"
+        final_string = "\x1b[36m\x1b[1m[START]\x1b[0m \x1b[32m\x1b[1mRequestId:\x1b[0m \x1b[35m\x1b[35mdd81d3de-5225-11e7-a24f-59014f430ab3\x1b[0m\x1b[0m \x1b[32m\x1b[1mVersion:\x1b[0m $LATEST\n\x1b[36m\x1b[1m[DEBUG]\x1b[0m 2017-06-15T23:53:44.194Z \x1b[35m\x1b[35mdd81d3de-5225-11e7-a24f-59014f430ab3\x1b[0m\x1b[0m \x1b[32m\x1b[1mZappa Event:\x1b[0m {'raw_command': 'import datetime; print(datetime.datetime.now())'}\n2017-06-15 23:53:44.195012\n\x1b[36m\x1b[1m[END]\x1b[0m \x1b[32m\x1b[1mRequestId:\x1b[0m \x1b[35m\x1b[35mdd81d3de-5225-11e7-a24f-59014f430ab3\x1b[0m\x1b[0m\n\x1b[36m\x1b[1m[REPORT]\x1b[0m \x1b[32m\x1b[1mRequestId:\x1b[0m \x1b[35m\x1b[35mdd81d3de-5225-11e7-a24f-59014f430ab3\x1b[0m\x1b[0m\n\x1b[32m\x1b[1mDuration:\x1b[0m 0.63 ms\n\x1b[32m\x1b[1mBilled\x1b[0m \x1b[32m\x1b[1mDuration:\x1b[0m 100 ms \n\x1b[32m\x1b[1mMemory Size:\x1b[0m 512 MB\n\x1b[32m\x1b[1mMax Memory Used:\x1b[0m 53 MB\n"
+
+        colorized_string = zappa_cli.colorize_invoke_command(plain_string)
+        self.assertEqual(final_string, colorized_string)
+
+    def test_cli_colorize_whole_words_only(self):
+        zappa_cli = ZappaCLI()
+        plain_string = "START RESTART END RENDER report [DEBUG] TEXT[DEBUG]TEXT"
+        final_string = "\x1b[36m\x1b[1m[START]\x1b[0m RESTART \x1b[36m\x1b[1m[END]\x1b[0m RENDER report \x1b[36m\x1b[1m[DEBUG]\x1b[0m TEXT\x1b[36m\x1b[1m[DEBUG]\x1b[0mTEXT"
+
+        colorized_string = zappa_cli.colorize_invoke_command(plain_string)
+        self.assertEqual(final_string, colorized_string)
+
+    def test_cli_colorize_invoke_command_bad_string(self):
+        zappa_cli = ZappaCLI()
+        plain_string = "Hey, I'm a plain string, won't be colorized"
+        final_string = "Hey, I'm a plain string, won't be colorized"
+
+        colorized_string = zappa_cli.colorize_invoke_command(plain_string)
+        self.assertEqual(final_string, colorized_string)
 
     # def test_cli_args(self):
     #     zappa_cli = ZappaCLI()
@@ -1404,6 +1537,20 @@ USE_TZ = True
         self.assertTrue(len(truncated) <= 64)
         self.assertEqual(truncated, "a-b")
 
+    def test_hashed_rule_name(self):
+        zappa = Zappa()
+        truncated = zappa.get_event_name(
+            "basldfkjalsdkfjalsdkfjaslkdfjalsdkfjadlsfkjasdlfkjasdlfkjasdflkjasdf-asdfasdfasdfasdfasdf",
+            "this.is.my.dang.function.wassup.yeah.its.long")
+        self.assertTrue(len(truncated) == 64)
+
+        rule_name = zappa.get_hashed_rule_name(
+            event=dict(name='some-event-name'),
+            function="this.is.my.dang.function.wassup.yeah.its.long",
+            lambda_name="basldfkjalsdkfjalsdkfjaslkdfjalsdkfjadlsfkjasdlfkjasdlfkjasdflkjasdf-asdfasdfasdfasdfasdf")
+        self.assertTrue(len(rule_name) <= 64)
+        self.assertTrue(rule_name.endswith("-this.is.my.dang.function.wassup.yeah.its.long"))
+
     def test_detect_dj(self):
         # Sanity
         settings_modules = detect_django_settings()
@@ -1444,7 +1591,7 @@ USE_TZ = True
 
     def test_remote_env_package(self):
         zappa_cli = ZappaCLI()
-        zappa_cli.api_stage = 'depricated_remote_env'
+        zappa_cli.api_stage = 'deprecated_remote_env'
         zappa_cli.load_settings('test_settings.json')
         self.assertEqual('lmbda-env', zappa_cli.stage_config['remote_env_bucket'])
         self.assertEqual('dev/env.json', zappa_cli.stage_config['remote_env_file'])
@@ -1498,6 +1645,25 @@ USE_TZ = True
             # cleanup
             os.remove(zappa_cli.zip_path)
 
+    def test_package_does_not_load_credentials(self):
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'ttt888'
+
+        with mock.patch('zappa.core.Zappa.load_credentials') as LoadCredentialsMock:
+            # load_credentials is set in ZappaCLI.handler; simulates 'zappa package'
+            zappa_cli.load_credentials = False
+            zappa_cli.load_settings('test_settings.json')
+            zappa_cli.package()
+            zappa_cli.on_exit()  # simulate the command exits
+
+            # credentials should not be loaded for package command
+            self.assertFalse(zappa_cli.load_credentials)
+            self.assertFalse(LoadCredentialsMock.called)
+
+        # cleanup
+        os.remove(zappa_cli.zip_path)
+
+
     def test_flask_logging_bug(self):
         """
         This checks whether Flask can write errors sanely.
@@ -1540,8 +1706,6 @@ USE_TZ = True
 
         zappa_cli.remove_local_zip()
 
-
-
     def test_validate_name(self):
         fname = 'tests/name_scenarios.json'
         with open(fname, 'r') as f:
@@ -1556,17 +1720,43 @@ USE_TZ = True
                     validate_name(value)
 
     def test_contains_python_files_or_subdirs(self):
-        files = ['foo.py']
-        dirs = []
-        self.assertTrue(contains_python_files_or_subdirs(dirs, files))
+        self.assertTrue(contains_python_files_or_subdirs('tests/data'))
+        self.assertTrue(contains_python_files_or_subdirs('tests/data/test2'))
+        self.assertFalse(contains_python_files_or_subdirs('tests/data/test1'))
 
-        files = []
-        dirs = ['subfolder']
-        self.assertTrue(contains_python_files_or_subdirs(dirs, files))
+    def test_conflicts_with_a_neighbouring_module(self):
+        self.assertTrue(conflicts_with_a_neighbouring_module('tests/data/test1'))
+        self.assertFalse(conflicts_with_a_neighbouring_module('tests/data/test2'))
 
-        files = ['somefile.txt']
-        dirs = []
-        self.assertFalse(contains_python_files_or_subdirs(dirs, files))
+    def test_settings_py_generation(self):
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'ttt888'
+        zappa_cli.load_settings('test_settings.json')
+        zappa_cli.create_package()
+        with zipfile.ZipFile(zappa_cli.zip_path, 'r') as lambda_zip:
+            content = lambda_zip.read('zappa_settings.py').decode("utf-8")
+            settings = {}
+            exec(content, globals(), settings)
+
+            # validate environment variables
+            self.assertIn('ENVIRONMENT_VARIABLES', settings)
+            self.assertEqual(settings['ENVIRONMENT_VARIABLES']['TEST_ENV_VAR'], "test_value")
+
+            # validate Context header mappings
+            self.assertIn('CONTEXT_HEADER_MAPPINGS', settings)
+            self.assertEqual(settings['CONTEXT_HEADER_MAPPINGS']['CognitoIdentityId'], "identity.cognitoIdentityId")
+            self.assertEqual(settings['CONTEXT_HEADER_MAPPINGS']['APIStage'], "stage")
+
+        zappa_cli.remove_local_zip()
+
+    def test_only_ascii_env_var_allowed(self):
+        zappa_cli = ZappaCLI()
+        zappa_cli.api_stage = 'ttt888'
+        zappa_cli.load_settings('tests/test_non_ascii_environment_var_key.json')
+        with self.assertRaises(ValueError) as context:
+            zappa_cli.create_package()
+        self.assertEqual('Environment variable keys must be ascii.', str(context.exception))
+
 
 
 if __name__ == '__main__':

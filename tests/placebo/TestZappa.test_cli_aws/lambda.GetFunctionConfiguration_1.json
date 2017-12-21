@@ -1,40 +1,32 @@
 {
-  "status_code": 200,
-  "data": {
-    "CodeSha256": "codehash",
-    "CodeSize": 22213824,
-    "Description": "Zappa Deployment",
-    "Environment": {
-      "Variables": {
-        "Key1": "Key2"
-      }
-    },
-    "FunctionArn": "some-function-arn",
-    "FunctionName": "some-function-name",
-    "Handler": "handler.lambda_handler",
-    "LastModified": "2017-04-02T22:38:23.754+0000",
-    "MemorySize": 1536,
-    "ResponseMetadata": {
-      "HTTPHeaders": {
-        "connection": "keep-alive",
-        "content-length": "669",
-        "content-type": "application/json",
-        "date": "Sun, 02 Apr 2017 22:41:02 GMT",
-        "x-amzn-requestid": "asdfasd"
-      },
-      "HTTPStatusCode": 200,
-      "RequestId": "asdfasd",
-      "RetryAttempts": 0
-    },
-    "Role": "",
-    "Runtime": "python2.7",
-    "Timeout": 300,
-    "Version": "$LATEST",
-    "VpcConfig": {
-      "SecurityGroupIds": [],
-      "SubnetIds": []
+    "status_code": 200,
+    "data": {
+        "ResponseMetadata": {
+            "RequestId": "8cd3e440-6d74-11e7-9ebd-693a5cc9b121",
+            "HTTPStatusCode": 200,
+            "HTTPHeaders": {
+                "content-type": "application/json",
+                "date": "Thu, 20 Jul 2017 17:54:59 GMT",
+                "x-amzn-requestid": "8cd3e440-6d74-11e7-9ebd-693a5cc9b121",
+                "content-length": "609",
+                "connection": "keep-alive"
+            },
+            "RetryAttempts": 0
+        },
+        "FunctionName": "zappa-ttt888",
+        "FunctionArn": "arn:aws:lambda:us-east-1:004396165043:function:zappa-ttt888",
+        "Runtime": "python3.6",
+        "Role": "arn:aws:iam::004396165043:role/zappa-ttt888-ZappaLambdaExecutionRole",
+        "Handler": "handler.lambda_handler",
+        "CodeSize": 16975308,
+        "Description": "Zappa Deployment",
+        "Timeout": 30,
+        "MemorySize": 512,
+        "LastModified": "2017-07-20T17:54:59.235+0000",
+        "CodeSha256": "0pOcmP7sDoO6mLbZKmtH5z0XyjT8wuu/1VenHLgu/MU=",
+        "Version": "$LATEST",
+        "Environment": {
+            "Variables": {}
+        }
     }
-  }
 }
-
-
