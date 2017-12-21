@@ -86,6 +86,7 @@ class ZappaCLI(object):
     zappa = None
     zappa_settings = None
     load_credentials = True
+    disable_progress = False
 
     # Specific settings
     api_stage = None
@@ -2303,7 +2304,7 @@ class ZappaCLI(object):
             try:
                 env_dict = dict((k.encode('ascii'), v) for (k, v) in env_dict.items())
             except Exception: # pragma: no cover
-                    raise ValueError("Environment variable keys must not be unicode.")
+                    raise ValueError("Environment variable keys must be ascii.")
 
             settings_s = settings_s + "ENVIRONMENT_VARIABLES={0}\n".format(
                     env_dict
